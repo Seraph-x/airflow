@@ -60,7 +60,7 @@ from airflow_breeze.utils.docker_command_utils import (
     fix_ownership_using_docker,
     perform_environment_checks,
 )
-from airflow_breeze.utils.fork_compare import get_fork_changes, is_fork_push
+from airflow_breeze.utils.fork_compare import get_fork_changes, get_fork_pull_request_labels, is_fork_push
 from airflow_breeze.utils.github import format_github_token_scope_guidance, retrieve_github_token
 from airflow_breeze.utils.path_utils import AIRFLOW_HOME_PATH, AIRFLOW_ROOT_PATH
 from airflow_breeze.utils.run_utils import run_command
@@ -289,14 +289,18 @@ def selective_check(
         github_event = GithubEvents(github_event_name)
         fork_push = is_fork_push(github_event, github_repository)
         fork_changes_truncated = False
-        if fork_push and commit_ref is not None:
-            fork_changes = get_fork_changes(
-                fork_owner=github_repository.split("/")[0],
-                sha=commit_ref,
-                base=default_branch,
+        fork_merge_base = None
+        labels = tuple(ast.literal_eval(pr_labels)) if pr_labels else ()
+        fork_owner = github_repository.split("/")[0]
+        if fork_push and github_context_dict.get("ref_name"):
+            labels = get_fork_pull_request_labels(
+                fork_owner=fork_owner, branch=github_context_dict["ref_name"]
             )
+        if fork_push and commit_ref is not None:
+            fork_changes = get_fork_changes(fork_owner=fork_owner, sha=commit_ref, base=default_branch)
             changed_files = fork_changes.files
             fork_changes_truncated = fork_changes.truncated
+            fork_merge_base = fork_changes.merge_base
             console_print(f"\n[info]Changed files against apache/airflow:[/]\n{changed_files}\n")
         elif commit_ref is not None:
             changed_files = get_changed_files(commit_ref=commit_ref)
@@ -307,7 +311,7 @@ def selective_check(
             files=changed_files,
             default_branch=default_branch,
             default_constraints_branch=default_constraints_branch,
-            pr_labels=tuple(ast.literal_eval(pr_labels)) if pr_labels else (),
+            pr_labels=labels,
             github_event=github_event,
             github_repository=github_repository,
             github_actor=github_actor,
@@ -315,6 +319,7 @@ def selective_check(
             platform=ci_platform,
             fork_push=fork_push,
             fork_changes_truncated=fork_changes_truncated,
+            fork_merge_base=fork_merge_base,
         )
         print(str(sc), file=sys.stderr)
     except Exception:
